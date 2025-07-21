@@ -750,6 +750,7 @@ dependencies = [
  "rsa",
  "rusqlite",
  "serde",
+ "sha2",
  "tokio",
  "tracing-subscriber",
 ]
