@@ -1,6 +1,6 @@
 mod pow;
 
-use h_mail::interface::check_pow::{CheckPow, CheckPowStatus};
+use crate::pow::solve_challenge;
 use h_mail::interface::pow_request::{PowRequest, PowResponse};
 use h_mail::interface::send_email::{SendEmail, SendEmailStatus};
 use h_mail::shared::big_uint_to_base64;
@@ -8,7 +8,6 @@ use reqwest::Client;
 use rsa::BigUint;
 use sha2::{Digest, Sha256};
 use tokio::time::Instant;
-use crate::pow::solve_challenge;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,7 +29,12 @@ async fn send_email(destination: &str, email: &str) -> Result<(), Box<dyn std::e
 
     println!("Waiting for response");
     let body = response.text().await?;
-    let pow_response = serde_json::from_str::<PowResponse>(&body).unwrap().get().unwrap().decode().unwrap();
+    let pow_response = serde_json::from_str::<PowResponse>(&body)
+        .unwrap()
+        .get()
+        .unwrap()
+        .decode()
+        .unwrap();
 
     println!("POW received. Calculating hash");
     let mut s = Sha256::new();
@@ -40,7 +44,11 @@ async fn send_email(destination: &str, email: &str) -> Result<(), Box<dyn std::e
 
     println!("Calculating POW with accepted policy iters: {iters}");
     let start = Instant::now();
-    let result = solve_challenge(challenge_hash.clone(), pow_response.pow_token().token(), iters);
+    let result = solve_challenge(
+        challenge_hash.clone(),
+        pow_response.pow_token().token(),
+        iters,
+    );
     let elapsed = start.elapsed();
     println!("Solved POW in {elapsed:?}");
 
@@ -49,7 +57,7 @@ async fn send_email(destination: &str, email: &str) -> Result<(), Box<dyn std::e
         iters,
         big_uint_to_base64(pow_response.pow_token().token()),
         big_uint_to_base64(&result),
-        destination.to_string()
+        destination.to_string(),
     );
 
     println!("Sending email");
