@@ -51,7 +51,7 @@ async fn send_email(destination: &str, email: &str) -> Result<(), Box<dyn std::e
     );
     let elapsed = start.elapsed();
     println!("Solved POW in {elapsed:?}");
-
+    
     let params = SendEmail::new(
         email.to_string(),
         iters,
