@@ -3,46 +3,115 @@ mod pow;
 use crate::pow::solve_challenge;
 use h_mail::interface::pow_request::{PowRequest, PowResponse};
 use h_mail::interface::send_email::{SendEmail, SendEmailStatus};
+use h_mail::interface::shared::PowClassification;
 use h_mail::shared::big_uint_to_base64;
 use reqwest::Client;
 use rsa::BigUint;
 use sha2::{Digest, Sha256};
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter};
+use std::io::{Write, stdin, stdout};
 use tokio::time::Instant;
+
+struct HMailErr(String);
+
+impl Debug for HMailErr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
+impl Display for HMailErr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for HMailErr {}
+
+fn read_line() -> String {
+    stdout().flush().unwrap();
+    let mut input = String::new();
+    stdin().read_line(&mut input).unwrap();
+    input.trim().to_string()
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    send_email("robert01.lucas", "Hello, world!").await?;
-    Ok(())
+    loop {
+        print!("Enter user: ");
+        let user = read_line();
+        print!("Enter server: ");
+        let server = read_line();
+        print!("Enter message: ");
+        let message = read_line();
+
+        let mut selection = 0;
+        while !(1..=3).contains(&selection) {
+            print!("Enter POW class [1: MIN, 2: ACCEPT, 3: PERSONAL]: ");
+            let input = read_line();
+            let Ok(x) = input.parse::<i32>() else {
+                continue;
+            };
+            selection = x;
+        }
+
+        let classification = match selection {
+            1 => PowClassification::Minimum,
+            2 => PowClassification::Accepted,
+            3 => PowClassification::Personal,
+            _ => unreachable!(),
+        };
+
+        println!("Sending...");
+        match send_email(&user, &server, &message, classification).await {
+            Ok(_) => println!("Sent!"),
+            Err(e) => println!("Error sending message: {e}"),
+        }
+        println!();
+    }
 }
 
-async fn send_email(destination: &str, email: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn send_email(
+    user: &str,
+    server: &str,
+    message: &str,
+    classification: PowClassification,
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
 
-    let params = PowRequest::new(destination.to_string());
+    let params = PowRequest::new(user.to_string());
 
-    println!("Sending POW request");
+    println!("\tSending POW request");
     let response = client
-        .get("http://localhost:8081/pow_request")
+        .get(format!("http://{server}:8081/pow_request"))
         .query(&params)
         .send()
         .await?;
 
-    println!("Waiting for response");
+    println!("\tWaiting for response");
     let body = response.text().await?;
-    let pow_response = serde_json::from_str::<PowResponse>(&body)
-        .unwrap()
-        .get()
-        .unwrap()
-        .decode()
-        .unwrap();
+    let Some(pow_response) = serde_json::from_str::<PowResponse>(&body)?.get() else {
+        return Err(Box::new(HMailErr("User does not exist".to_string())));
+    };
 
-    println!("POW received. Calculating hash");
+    let pow_response = pow_response.decode()?;
+
+    println!("\tPOW received. Calculating hash");
     let mut s = Sha256::new();
-    s.update(email.as_bytes());
+    s.update(message.as_bytes());
     let challenge_hash = BigUint::from_bytes_le(&s.finalize());
-    let iters = pow_response.policy().accepted();
 
-    println!("Calculating POW with accepted policy iters: {iters}");
+    let iters = match classification {
+        PowClassification::Minimum => pow_response.policy().minimum(),
+        PowClassification::Accepted => pow_response.policy().accepted(),
+        PowClassification::Personal => pow_response.policy().personal(),
+    };
+
+    println!(
+        "\tCalculating POW with `{}` policy iters: {iters}",
+        classification.to_ident()
+    );
     let start = Instant::now();
     let result = solve_challenge(
         challenge_hash.clone(),
@@ -50,28 +119,28 @@ async fn send_email(destination: &str, email: &str) -> Result<(), Box<dyn std::e
         iters,
     );
     let elapsed = start.elapsed();
-    println!("Solved POW in {elapsed:?}");
-    
+    println!("\tSolved POW in {elapsed:?}");
+
     let params = SendEmail::new(
-        email.to_string(),
+        message.to_string(),
         iters,
         big_uint_to_base64(pow_response.pow_token().token()),
         big_uint_to_base64(&result),
-        destination.to_string(),
+        user.to_string(),
     );
 
-    println!("Sending email");
+    println!("\tSending email");
     let response = client
-        .post("http://localhost:8081/send_email")
+        .post(format!("http://{server}:8081/send_email"))
         .json(&params)
         .send()
         .await?;
 
-    println!("Waiting for response...");
+    println!("\tWaiting for response...");
     let body = response.text().await?;
-    let send_email_response = serde_json::from_str::<SendEmailStatus>(&body).unwrap();
+    let send_email_response = serde_json::from_str::<SendEmailStatus>(&body)?;
 
-    println!("Result: {send_email_response:#?}");
+    println!("\tResult: {send_email_response:#?}");
 
     Ok(())
 }
